@@ -10,6 +10,7 @@ from tfdocs.utils import (
     construct_tf_file,
     generate_source,
     process_line_block,
+    process_named_block,
 )
 
 
@@ -19,6 +20,7 @@ class VariableItem(TypedDict, total=False):
     type: str
     description: str
     default: str
+    validation: str
 
 
 class Readme:
@@ -66,16 +68,24 @@ class Readme:
                         default_content,
                         description_content,
                         type_override,
-                        cont,
-                    ) = ("", "", "", None, None)
+                        validation_content,
+                    ) = ("", "", "", None, "")
+                    type_cont = None
+                    type_override_cont = None
+                    default_cont = None
+                    description_cont = None
+                    validation_cont = None
 
                     for line_block in block:
-                        type_content, cont = process_line_block(
-                            line_block, "type", type_content, cont
+                        type_content, type_cont = process_line_block(
+                            line_block, "type", type_content, type_cont
                         )
 
-                        type_override, cont = process_line_block(
-                            line_block, "type_override", type_override, cont
+                        type_override, type_override_cont = process_line_block(
+                            line_block,
+                            "type_override",
+                            type_override,
+                            type_override_cont,
                         )
 
                         type_len_content = (
@@ -86,11 +96,20 @@ class Readme:
                             if candidate_len > self.str_len:
                                 self.str_len = candidate_len
 
-                        default_content, cont = process_line_block(
-                            line_block, "default", default_content, cont
+                        default_content, default_cont = process_line_block(
+                            line_block, "default", default_content, default_cont
                         )
-                        description_content, cont = process_line_block(
-                            line_block, "description", description_content, cont
+                        description_content, description_cont = process_line_block(
+                            line_block,
+                            "description",
+                            description_content,
+                            description_cont,
+                        )
+                        validation_content, validation_cont = process_named_block(
+                            line_block,
+                            "validation",
+                            validation_content,
+                            validation_cont,
                         )
 
                     block = []
@@ -105,6 +124,8 @@ class Readme:
 
                     if default_content:
                         attributes["default"] = default_content
+                    if validation_content:
+                        attributes["validation"] = validation_content
 
                     self.variables.append(attributes)
 

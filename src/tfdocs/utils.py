@@ -5,7 +5,7 @@ import git
 
 def count_blocks(data):
     s = "".join(data) if isinstance(data, list) else data
-    opens = {"{": "}", "(": ")", "[": "]", "<": ">"}
+    opens = {"{": "}", "(": ")", "[": "]"}
     closes = {v: k for k, v in opens.items()}
     stack = []
 
@@ -45,6 +45,28 @@ def process_line_block(line_block, target_type, content, cont):
             content += line_block.strip()
         else:
             content = line_block.split("=", 1)[1].strip()
+
+        if not count_blocks(content):
+            cont = target_type
+        else:
+            cont = None
+
+    return content, cont
+
+
+def process_named_block(line_block, target_type, content, cont):
+    block_match = None
+
+    if not cont:
+        block_match = (
+            line_block if re.match(rf"^\s*{target_type}\s*{{", line_block) else None
+        )
+
+    if block_match or cont == target_type:
+        if cont and content:
+            content += "\n" + line_block.rstrip()
+        else:
+            content = line_block.rstrip()
 
         if not count_blocks(content):
             cont = target_type
@@ -190,12 +212,30 @@ def format_function_call(content: str, indent_level: int, inline: bool = False) 
     return f"{func_name}({joined})"
 
 
+def indent_block(content: str, indent_level: int = 0) -> str:
+    lines = content.strip("\n").splitlines()
+    if not lines:
+        return ""
+
+    non_empty_lines = [line for line in lines if line.strip()]
+    common_indent = min(
+        len(line) - len(line.lstrip()) for line in non_empty_lines
+    ) if non_empty_lines else 0
+    indent = "  " * indent_level
+
+    return "\n".join(
+        f"{indent}{line[common_indent:]}" if line.strip() else ""
+        for line in lines
+    )
+
+
 def construct_tf_variable(content):
     name = content["name"]
     type_str = content["type"].strip()
     desc_str = content["description"].strip()
     has_default = "default" in content
     default_str = content.get("default", "").strip()
+    validation_str = content.get("validation", "")
 
     lines = [f'variable "{name}" {{']
 
@@ -216,6 +256,9 @@ def construct_tf_variable(content):
             lines.append("  default = {}")
         else:
             lines.append(f"  default = {format_block(default_str, inline=True)}")
+
+    if validation_str:
+        lines.append(indent_block(validation_str, indent_level=1))
 
     lines.append("}\n\n")
     return "\n".join(lines)
