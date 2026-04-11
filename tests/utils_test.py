@@ -14,11 +14,10 @@ def test_count_blocks():
     assert utils.count_blocks("[][") is False
     assert utils.count_blocks("[][]") is True
     assert utils.count_blocks("[][][") is False
-    assert utils.count_blocks("<>") is True
-    assert utils.count_blocks("<><") is False
-    assert utils.count_blocks("<><>") is True
-    assert utils.count_blocks("<><><") is False
-    assert utils.count_blocks("(){}[]<>") is True
+    assert utils.count_blocks("a > b") is True
+    assert utils.count_blocks("a < b") is True
+    assert utils.count_blocks("(a > b) && (c < d)") is True
+    assert utils.count_blocks("(){}[]") is True
     assert utils.count_blocks("({[]})") is True
     assert utils.count_blocks("({[]})(") is False
     assert utils.count_blocks("({[]})()") is True
@@ -96,6 +95,25 @@ def test_process_line_block():
 
     assert utils.process_line_block("  )]", "type", "type = list[(", "type") == (
         "type = list[()]",
+        None,
+    )
+
+
+def test_process_named_block():
+    assert utils.process_named_block("validation {", "validation", "", None) == (
+        "validation {",
+        "validation",
+    )
+    assert utils.process_named_block(
+        '  error_message = "my error"', "validation", "validation {", "validation"
+    ) == (
+        'validation {\n  error_message = "my error"',
+        "validation",
+    )
+    assert utils.process_named_block(
+        "}", "validation", 'validation {\n  error_message = "my error"', "validation"
+    ) == (
+        'validation {\n  error_message = "my error"\n}',
         None,
     )
 
@@ -236,6 +254,30 @@ def test_construct_tf_variable():
 
 """
     assert utils.construct_tf_variable(var3in) == var3out
+
+    var4in = {
+        "name": "subnet_ids",
+        "type_override": None,
+        "type": "list(string)",
+        "description": '"List of subnet IDs where the Lambda function will have access. They have to have connectivity to the Loki endpoint"',
+        "default": "null",
+        "validation": """  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }""",
+    }
+    var4out = """variable "subnet_ids" {
+  type = list(string)
+  description = "List of subnet IDs where the Lambda function will have access. They have to have connectivity to the Loki endpoint"
+  default = null
+  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }
+}
+
+"""
+    assert utils.construct_tf_variable(var4in) == var4out
 
 
 def test_construct_tf_file():

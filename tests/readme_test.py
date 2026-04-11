@@ -159,3 +159,50 @@ def test_write_readme(temp_files):
     )
 
     assert content.strip() == expected_readme_content.strip()
+
+
+def test_validation_variable_round_trip():
+    variable_with_validation = """
+variable "subnet_ids" {
+  type = list(string)
+  description = "List of subnet IDs where the Lambda function will have access. They have to have connectivity to the Loki endpoint"
+  default = null
+  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }
+}
+"""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(variable_with_validation)
+
+        with open(readme_file, "w") as f:
+            f.write(mock_readme_md)
+
+        rd = readme.Readme(readme_file, variables_file)
+
+        assert rd.variables == [
+            {
+                "name": "subnet_ids",
+                "type_override": None,
+                "type": "list(string)",
+                "description": '"List of subnet IDs where the Lambda function will have access. They have to have connectivity to the Loki endpoint"',
+                "default": "null",
+                "validation": """  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }""",
+            }
+        ]
+
+        rd.write_variables()
+
+        with open(variables_file, "r") as f:
+            content = f.read()
+
+        assert content.strip() == variable_with_validation.strip()

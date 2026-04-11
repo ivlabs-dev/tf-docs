@@ -115,6 +115,6 @@ variable "my_object" {
 
 # Authors
 
-`tfdocs` is created and maintained by [vajeen].
+`tfdocs` is created and maintained by [ivlabs].
 
-[vajeen]: https://github.com/vajeen
+[ivlabs]: https://github.com/ivlabs-dev/tf-docs
