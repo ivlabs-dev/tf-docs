@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import git
 
 
@@ -74,6 +75,9 @@ def process_named_block(line_block, target_type, content, cont):
             cont = None
 
     return content, cont
+
+
+_RE_VAR_HEADER = re.compile(r'\s*variable\s+"?([^"]+)"?\s*{\s*', re.DOTALL)
 
 
 _TYPE_CONSTRUCTORS_RE = re.compile(r"\b(list|set|map|object|tuple)\b")
@@ -227,6 +231,125 @@ def indent_block(content: str, indent_level: int = 0) -> str:
         f"{indent}{line[common_indent:]}" if line.strip() else ""
         for line in lines
     )
+
+
+def _is_expression_string(value: str) -> bool:
+    stripped = value.strip()
+    return stripped.startswith("${") and stripped.endswith("}")
+
+
+def _unwrap_expression(value: str) -> str:
+    stripped = value.strip()
+    return stripped[2:-1] if _is_expression_string(stripped) else stripped
+
+
+def _format_hcl_key(key) -> str:
+    if isinstance(key, str):
+        return json.dumps(key)
+    return str(key)
+
+
+def hcl_value_to_string(value, treat_plain_string_as_expression: bool = False) -> str:
+    if value is None:
+        return "null"
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    if isinstance(value, str):
+        if _is_expression_string(value):
+            return _unwrap_expression(value)
+        if treat_plain_string_as_expression:
+            return value.strip()
+        return json.dumps(value)
+
+    if isinstance(value, list):
+        return "[" + ",".join(hcl_value_to_string(item) for item in value) + "]"
+
+    if isinstance(value, dict):
+        parts = [
+            f"{_format_hcl_key(key)} = {hcl_value_to_string(item)}"
+            for key, item in value.items()
+        ]
+        return "{" + ",".join(parts) + "}"
+
+    return str(value)
+
+
+def construct_validation_blocks(validation_value) -> str:
+    if not validation_value:
+        return ""
+
+    validation_blocks = (
+        validation_value
+        if isinstance(validation_value, list)
+        else [validation_value]
+    )
+
+    rendered_blocks = []
+    for block in validation_blocks:
+        if not isinstance(block, dict):
+            continue
+
+        lines = ["  validation {"]
+        if "condition" in block:
+            lines.append(
+                "    condition = "
+                + hcl_value_to_string(
+                    block["condition"], treat_plain_string_as_expression=True
+                )
+            )
+        if "error_message" in block:
+            lines.append(
+                "    error_message = " + hcl_value_to_string(block["error_message"])
+            )
+
+        for key, value in block.items():
+            if key in {"condition", "error_message"}:
+                continue
+            lines.append(f"    {key} = {hcl_value_to_string(value)}")
+
+        lines.append("  }")
+        rendered_blocks.append("\n".join(lines))
+
+    return "\n".join(rendered_blocks)
+
+
+def extract_type_overrides(file_content: str) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    block = []
+    match_flag = False
+    name = None
+
+    for line in file_content.split("\n"):
+        block.append(line)
+        match = _RE_VAR_HEADER.match(line)
+        if match and not match_flag:
+            name = match.group(1)
+            match_flag = True
+
+        if count_blocks(block) and match_flag:
+            match_flag = False
+            type_override = None
+            cont = None
+
+            for line_block in block:
+                type_override, cont = process_line_block(
+                    line_block,
+                    "type_override",
+                    type_override,
+                    cont,
+                )
+
+            if name and type_override:
+                overrides[name] = type_override
+
+            block = []
+
+    return overrides
 
 
 def construct_tf_variable(content):

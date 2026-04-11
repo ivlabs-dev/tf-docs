@@ -118,6 +118,49 @@ def test_process_named_block():
     )
 
 
+def test_hcl_value_to_string():
+    assert utils.hcl_value_to_string(None) == "null"
+    assert utils.hcl_value_to_string(True) == "true"
+    assert utils.hcl_value_to_string(False) == "false"
+    assert utils.hcl_value_to_string(42) == "42"
+    assert utils.hcl_value_to_string("plain text") == '"plain text"'
+    assert (
+        utils.hcl_value_to_string("${list(string)}", treat_plain_string_as_expression=True)
+        == "list(string)"
+    )
+    assert utils.hcl_value_to_string("list(string)", treat_plain_string_as_expression=True) == "list(string)"
+    assert utils.hcl_value_to_string(["a", 1, None]) == '["a",1,null]'
+    assert utils.hcl_value_to_string({"user1": ["tag1"]}) == '{"user1" = ["tag1"]}'
+
+
+def test_construct_validation_blocks():
+    validation = [
+        {
+            "condition": "${!(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)}",
+            "error_message": "You must set subnet_ids when primary is true and secondary is false.",
+        }
+    ]
+    expected = """  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }"""
+    assert utils.construct_validation_blocks(validation) == expected
+
+
+def test_extract_type_overrides():
+    content = """
+variable "my_object" {
+  # tfdocs: type = list(object)
+  type = list(object({
+    name = string
+  }))
+}
+"""
+    assert utils.extract_type_overrides(content) == {
+        "my_object": "list(object)"
+    }
+
+
 def test_match_type_constructors():
     assert utils.match_type_constructors("list") is True
     assert utils.match_type_constructors("set") is True
