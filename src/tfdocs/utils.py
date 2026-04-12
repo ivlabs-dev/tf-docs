@@ -249,6 +249,18 @@ def _format_hcl_key(key) -> str:
     return str(key)
 
 
+def normalize_hcl_string(value: str) -> str:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+        if stripped[0] == '"':
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped[1:-1]
+        return stripped[1:-1]
+    return value
+
+
 def hcl_value_to_string(value, treat_plain_string_as_expression: bool = False) -> str:
     if value is None:
         return "null"
@@ -260,6 +272,7 @@ def hcl_value_to_string(value, treat_plain_string_as_expression: bool = False) -
         return str(value)
 
     if isinstance(value, str):
+        value = normalize_hcl_string(value)
         if _is_expression_string(value):
             return _unwrap_expression(value)
         if treat_plain_string_as_expression:
@@ -320,6 +333,28 @@ def construct_validation_blocks(validation_value) -> str:
 
 def extract_type_overrides(file_content: str) -> dict[str, str]:
     overrides: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        type_override = item.get("type_override")
+        if type_override:
+            overrides[name] = type_override
+
+    return overrides
+
+
+def extract_validation_blocks(file_content: str) -> dict[str, str]:
+    validations: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        validation = item.get("validation")
+        if validation:
+            validations[name] = validation
+
+    return validations
+
+
+def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
+    metadata: dict[str, dict[str, str]] = {}
     block = []
     match_flag = False
     name = None
@@ -334,22 +369,36 @@ def extract_type_overrides(file_content: str) -> dict[str, str]:
         if count_blocks(block) and match_flag:
             match_flag = False
             type_override = None
-            cont = None
+            type_override_cont = None
+            validation = ""
+            validation_cont = None
 
             for line_block in block:
-                type_override, cont = process_line_block(
+                type_override, type_override_cont = process_line_block(
                     line_block,
                     "type_override",
                     type_override,
-                    cont,
+                    type_override_cont,
+                )
+                validation, validation_cont = process_named_block(
+                    line_block,
+                    "validation",
+                    validation,
+                    validation_cont,
                 )
 
-            if name and type_override:
-                overrides[name] = type_override
+            if name:
+                item: dict[str, str] = {}
+                if type_override:
+                    item["type_override"] = type_override
+                if validation:
+                    item["validation"] = validation
+                if item:
+                    metadata[name] = item
 
             block = []
 
-    return overrides
+    return metadata
 
 
 def construct_tf_variable(content):

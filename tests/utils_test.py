@@ -124,6 +124,7 @@ def test_hcl_value_to_string():
     assert utils.hcl_value_to_string(False) == "false"
     assert utils.hcl_value_to_string(42) == "42"
     assert utils.hcl_value_to_string("plain text") == '"plain text"'
+    assert utils.hcl_value_to_string('"already quoted"') == '"already quoted"'
     assert (
         utils.hcl_value_to_string("${list(string)}", treat_plain_string_as_expression=True)
         == "list(string)"
@@ -159,6 +160,30 @@ variable "my_object" {
     assert utils.extract_type_overrides(content) == {
         "my_object": "list(object)"
     }
+
+
+def test_extract_validation_blocks():
+    content = """
+variable "subnet_ids" {
+  type = list(string)
+  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }
+}
+"""
+    assert utils.extract_validation_blocks(content) == {
+        "subnet_ids": """  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }"""
+    }
+
+
+def test_normalize_hcl_string():
+    assert utils.normalize_hcl_string('"var1"') == "var1"
+    assert utils.normalize_hcl_string('"This is variable 1"') == "This is variable 1"
+    assert utils.normalize_hcl_string("list(string)") == "list(string)"
 
 
 def test_match_type_constructors():

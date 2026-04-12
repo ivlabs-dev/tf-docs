@@ -10,8 +10,10 @@ from tfdocs.utils import (
     construct_validation_blocks,
     construct_tf_file,
     extract_type_overrides,
+    extract_validation_blocks,
     generate_source,
     hcl_value_to_string,
+    normalize_hcl_string,
 )
 
 
@@ -50,12 +52,15 @@ class Readme:
                 file_content = file.read().strip()
             parsed_content = hcl2.load(StringIO(file_content))
             type_overrides = extract_type_overrides(file_content)
+            validation_blocks = extract_validation_blocks(file_content)
 
             for variable_block in parsed_content.get("variable", []):
                 if not isinstance(variable_block, dict):
                     continue
 
                 for name, body in variable_block.items():
+                    if isinstance(name, str):
+                        name = normalize_hcl_string(name)
                     if not isinstance(body, dict):
                         body = {}
 
@@ -70,7 +75,7 @@ class Readme:
                         if description_raw is not None
                         else '"No description provided"'
                     )
-                    validation_content = construct_validation_blocks(
+                    validation_content = validation_blocks.get(name) or construct_validation_blocks(
                         body.get("validation")
                     )
 
