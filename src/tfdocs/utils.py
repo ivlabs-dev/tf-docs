@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import json
@@ -44,6 +46,28 @@ def process_line_block(line_block, target_type, content, cont):
     if type_match or cont == target_type:
         if cont:
             content += line_block.strip()
+        else:
+            content = line_block.split("=", 1)[1].strip()
+
+        if not count_blocks(content):
+            cont = target_type
+        else:
+            cont = None
+
+    return content, cont
+
+
+def process_raw_assignment_block(line_block, target_type, content, cont):
+    type_match = None
+
+    if not cont:
+        type_match = (
+            line_block if re.match(rf"^\s*{target_type}\s*=\s*", line_block) else None
+        )
+
+    if type_match or cont == target_type:
+        if cont and content:
+            content += "\n" + line_block.rstrip()
         else:
             content = line_block.split("=", 1)[1].strip()
 
@@ -353,6 +377,17 @@ def extract_validation_blocks(file_content: str) -> dict[str, str]:
     return validations
 
 
+def extract_default_blocks(file_content: str) -> dict[str, str]:
+    defaults: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        default = item.get("default_block")
+        if default is not None:
+            defaults[name] = default
+
+    return defaults
+
+
 def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
     metadata: dict[str, dict[str, str]] = {}
     block = []
@@ -370,6 +405,8 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
             match_flag = False
             type_override = None
             type_override_cont = None
+            default_block = ""
+            default_block_cont = None
             validation = ""
             validation_cont = None
 
@@ -379,6 +416,12 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
                     "type_override",
                     type_override,
                     type_override_cont,
+                )
+                default_block, default_block_cont = process_raw_assignment_block(
+                    line_block,
+                    "default",
+                    default_block,
+                    default_block_cont,
                 )
                 validation, validation_cont = process_named_block(
                     line_block,
@@ -391,6 +434,8 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
                 item: dict[str, str] = {}
                 if type_override:
                     item["type_override"] = type_override
+                if default_block:
+                    item["default_block"] = default_block
                 if validation:
                     item["validation"] = validation
                 if item:
@@ -401,12 +446,13 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
     return metadata
 
 
-def construct_tf_variable(content):
+def construct_tf_variable(content, default_blocks: dict[str, str] | None = None):
     name = content["name"]
     type_str = content["type"].strip()
     desc_str = content["description"].strip()
     has_default = "default" in content
     default_str = content.get("default", "").strip()
+    default_block_str = (default_blocks or {}).get(name, "").strip()
     validation_str = content.get("validation", "")
 
     lines = [f'variable "{name}" {{']
@@ -424,7 +470,14 @@ def construct_tf_variable(content):
         lines.append(f"  description = {desc_str}")
 
     if has_default:
-        if default_str == "{}":
+        if default_block_str:
+            default_lines = default_block_str.splitlines()
+            if len(default_lines) == 1:
+                lines.append(f"  default = {default_lines[0].strip()}")
+            else:
+                lines.append(f"  default = {default_lines[0].strip()}")
+                lines.extend(line.rstrip() for line in default_lines[1:])
+        elif default_str == "{}":
             lines.append("  default = {}")
         else:
             lines.append(f"  default = {format_block(default_str, inline=True)}")
@@ -436,8 +489,8 @@ def construct_tf_variable(content):
     return "\n".join(lines)
 
 
-def construct_tf_file(content):
-    parts = (construct_tf_variable(item) for item in content)
+def construct_tf_file(content, default_blocks: dict[str, str] | None = None):
+    parts = (construct_tf_variable(item, default_blocks=default_blocks) for item in content)
     return "".join(parts).rstrip() + "\n"
 
 

@@ -9,6 +9,7 @@ from rich.console import Console
 from tfdocs.utils import (
     construct_validation_blocks,
     construct_tf_file,
+    extract_default_blocks,
     extract_type_overrides,
     extract_validation_blocks,
     generate_source,
@@ -52,6 +53,7 @@ class Readme:
                 file_content = file.read().strip()
             parsed_content = hcl2.load(StringIO(file_content))
             type_overrides = extract_type_overrides(file_content)
+            self.default_blocks = extract_default_blocks(file_content)
             validation_blocks = extract_validation_blocks(file_content)
 
             for variable_block in parsed_content.get("variable", []):
@@ -102,7 +104,7 @@ class Readme:
                 self.variables, key=lambda k: k["name"]
             )
 
-            if construct_tf_file(self.sorted_variables).strip() == file_content.strip():
+            if construct_tf_file(self.sorted_variables, self.default_blocks).strip() == file_content.strip():
                 self.variables_changed = False
 
         except FileNotFoundError:
@@ -113,11 +115,11 @@ class Readme:
 
     def write_variables(self) -> None:
         with open(self.variables_file, "w") as file:
-            file.writelines(construct_tf_file(self.sorted_variables))
+            file.writelines(construct_tf_file(self.sorted_variables, self.default_blocks))
 
     def print_variables_file(self) -> None:
         self.console.print("[purple]--- variables.tf ---[/]")
-        print(construct_tf_file(self.sorted_variables))
+        print(construct_tf_file(self.sorted_variables, self.default_blocks))
 
     def get_status(self) -> Dict[str, bool]:
         return {

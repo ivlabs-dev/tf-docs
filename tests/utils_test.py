@@ -180,6 +180,31 @@ variable "subnet_ids" {
     }
 
 
+def test_extract_default_blocks():
+    content = """
+variable "rabbitmq_extra_users" {
+  type = map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))
+  default = {
+    "monitor" = {
+      tags = ["monitoring"]
+      vhosts = ["imw", "papi", "capi", "webhooks"]
+    }
+  }
+}
+"""
+    assert utils.extract_default_blocks(content) == {
+        "rabbitmq_extra_users": """{
+    "monitor" = {
+      tags = ["monitoring"]
+      vhosts = ["imw", "papi", "capi", "webhooks"]
+    }
+  }"""
+    }
+
+
 def test_normalize_hcl_string():
     assert utils.normalize_hcl_string('"var1"') == "var1"
     assert utils.normalize_hcl_string('"This is variable 1"') == "This is variable 1"
