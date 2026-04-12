@@ -1,10 +1,7 @@
-import os
-import sys
 import errno
 from unittest.mock import patch, MagicMock
 
 import pytest
-from rich.console import Console
 
 from tfdocs.__main__ import main, report_and_exit, _cli_entrypoint
 
