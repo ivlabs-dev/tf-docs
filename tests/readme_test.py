@@ -163,6 +163,40 @@ def test_write_readme(temp_files):
     assert content.strip() == expected_readme_content.strip()
 
 
+def test_construct_readme_without_existing_readme():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(mock_variables_tf)
+
+        rd = readme.Readme(
+            readme_file,
+            variables_file,
+            module_name="example",
+            module_source="git@git.com:tfdocs",
+        )
+
+        constructed_readme = rd.construct_readme()
+
+        assert constructed_readme[0] == "# example module"
+        assert "<!-- TFDOCS START -->" in constructed_readme
+        assert "<!-- TFDOCS END -->" in constructed_readme
+        assert '  source = "git@git.com:tfdocs"' in constructed_readme
+
+
+def test_readme_initialization_missing_variables_file():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "does-not-exist.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with pytest.raises(SystemExit) as exc_info:
+            readme.Readme(readme_file, variables_file)
+
+        assert exc_info.value.code == -1
+
+
 def test_validation_variable_round_trip():
     variable_with_validation = """
 variable "subnet_ids" {
@@ -328,3 +362,50 @@ variable "service_users_spaced" {
             in line
             for line in rd.construct_readme()
         )
+
+
+def test_type_block_round_trip_preserves_inline_spacing_styles():
+    variables_content = """
+variable "service_links_compact" {
+  type = map(object({authorizations = map(list(string)),name = string}))
+  description = "Links compact"
+  default = {}
+}
+
+variable "service_links_spaced" {
+  type = map(object({tags = list(string), vhosts = list(string)}))
+  description = "Links spaced"
+  default = {}
+}
+"""
+    expected_output = """
+variable "service_links_compact" {
+  description = "Links compact"
+  type = map(object({authorizations = map(list(string)),name = string}))
+  default = {}
+}
+
+variable "service_links_spaced" {
+  description = "Links spaced"
+  type = map(object({tags = list(string), vhosts = list(string)}))
+  default = {}
+}
+"""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(variables_content)
+
+        with open(readme_file, "w") as f:
+            f.write(mock_readme_md)
+
+        rd = readme.Readme(readme_file, variables_file)
+        rd.write_variables()
+
+        with open(variables_file, "r") as f:
+            content = f.read()
+
+        assert content.strip() == expected_output.strip()
