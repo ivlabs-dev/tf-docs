@@ -162,6 +162,28 @@ variable "my_object" {
     }
 
 
+def test_extract_type_blocks():
+    content = """
+variable "service_users_compact" {
+  type = map(object({authorizations = map(list(string)),name = string}))
+}
+
+variable "service_users_multiline" {
+  type = map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))
+}
+"""
+    assert utils.extract_type_blocks(content) == {
+        "service_users_compact": "map(object({authorizations = map(list(string)),name = string}))",
+        "service_users_multiline": """map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))""",
+    }
+
+
 def test_extract_validation_blocks():
     content = """
 variable "subnet_ids" {
@@ -209,15 +231,6 @@ def test_normalize_hcl_string():
     assert utils.normalize_hcl_string('"var1"') == "var1"
     assert utils.normalize_hcl_string('"This is variable 1"') == "This is variable 1"
     assert utils.normalize_hcl_string("list(string)") == "list(string)"
-
-
-def test_normalize_inline_spacing():
-    assert (
-        utils.normalize_inline_spacing(
-            "map(object({tags = list(string),vhosts = list(string)}))"
-        )
-        == "map(object({tags = list(string), vhosts = list(string)}))"
-    )
 
 
 def test_match_type_constructors():

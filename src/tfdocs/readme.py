@@ -10,12 +10,12 @@ from tfdocs.utils import (
     construct_validation_blocks,
     construct_tf_file,
     extract_default_blocks,
+    extract_type_blocks,
     extract_type_overrides,
     extract_validation_blocks,
     generate_source,
     hcl_value_to_string,
     normalize_hcl_string,
-    normalize_inline_spacing,
 )
 
 
@@ -53,6 +53,7 @@ class Readme:
             with open(self.variables_file, "r") as file:
                 file_content = file.read().strip()
             parsed_content = hcl2.load(StringIO(file_content))
+            self.type_blocks = extract_type_blocks(file_content)
             type_overrides = extract_type_overrides(file_content)
             self.default_blocks = extract_default_blocks(file_content)
             validation_blocks = extract_validation_blocks(file_content)
@@ -68,12 +69,14 @@ class Readme:
                         body = {}
 
                     type_override = type_overrides.get(name)
-                    type_content = normalize_inline_spacing(
-                        hcl_value_to_string(
+                    raw_type_block = self.type_blocks.get(name, "")
+                    if raw_type_block and "\n" not in raw_type_block:
+                        type_content = raw_type_block.strip()
+                    else:
+                        type_content = hcl_value_to_string(
                             body.get("type", "unknown"),
                             treat_plain_string_as_expression=True,
                         ).strip()
-                    )
                     description_raw = body.get("description")
                     description_content = (
                         hcl_value_to_string(description_raw)
@@ -107,7 +110,11 @@ class Readme:
                 self.variables, key=lambda k: k["name"]
             )
 
-            if construct_tf_file(self.sorted_variables, self.default_blocks).strip() == file_content.strip():
+            if construct_tf_file(
+                self.sorted_variables,
+                self.default_blocks,
+                self.type_blocks,
+            ).strip() == file_content.strip():
                 self.variables_changed = False
 
         except FileNotFoundError:
@@ -118,11 +125,23 @@ class Readme:
 
     def write_variables(self) -> None:
         with open(self.variables_file, "w") as file:
-            file.writelines(construct_tf_file(self.sorted_variables, self.default_blocks))
+            file.writelines(
+                construct_tf_file(
+                    self.sorted_variables,
+                    self.default_blocks,
+                    self.type_blocks,
+                )
+            )
 
     def print_variables_file(self) -> None:
         self.console.print("[purple]--- variables.tf ---[/]")
-        print(construct_tf_file(self.sorted_variables, self.default_blocks))
+        print(
+            construct_tf_file(
+                self.sorted_variables,
+                self.default_blocks,
+                self.type_blocks,
+            )
+        )
 
     def get_status(self) -> Dict[str, bool]:
         return {

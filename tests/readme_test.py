@@ -267,62 +267,6 @@ variable "service_users" {
   }
 }
 """
-    expected_output = """
-variable "service_extra_users" {
-  type = map(object({
-    tags = list(string),
-    vhosts = list(string)
-  }))
-  description = "Extra users"
-  default = {
-    "monitor" = {
-      tags = [
-        "monitoring"
-      ]
-      vhosts = [
-        "imw",
-        "papi",
-        "capi",
-        "webhooks"
-      ]
-    }
-  }
-}
-
-variable "service_users" {
-  type = map(object({
-    tags = list(string),
-    vhosts = list(string)
-  }))
-  description = "Users"
-  default = {
-    "public-api" = {
-      tags = [
-        "administrator"
-      ]
-      vhosts = [
-        "papi"
-      ]
-    }
-    "integrations" = {
-      tags = [
-        "administrator"
-      ]
-      vhosts = [
-        "imw"
-      ]
-    }
-    "webhooks" = {
-      tags = [
-        "administrator"
-      ]
-      vhosts = [
-        "webhooks"
-      ]
-    }
-  }
-}
-"""
 
     with tempfile.TemporaryDirectory() as temp_dir:
         variables_file = os.path.join(temp_dir, "variables.tf")
@@ -342,17 +286,20 @@ variable "service_users" {
 
         assert '\\"monitor\\"' not in content
         assert '"tags" =' not in content
-        assert content.strip() == expected_output.strip()
+        assert content.strip() == variables_with_nested_map_defaults.strip()
 
 
-def test_object_type_spacing_in_readme_output():
+def test_inline_object_type_spacing_is_preserved_in_readme_output():
     variables_content = """
-variable "service_users" {
-  type = map(object({
-    tags = list(string)
-    vhosts = list(string)
-  }))
-  description = "Users"
+variable "service_users_compact" {
+  type = map(object({authorizations = map(list(string)),name = string}))
+  description = "Users compact"
+  default = {}
+}
+
+variable "service_users_spaced" {
+  type = map(object({tags = list(string), vhosts = list(string)}))
+  description = "Users spaced"
   default = {}
 }
 """
@@ -369,9 +316,15 @@ variable "service_users" {
 
         rd = readme.Readme(readme_file, variables_file, module_name="example")
 
-        assert rd.variables[0]["type"] == 'map(object({tags = list(string), vhosts = list(string)}))'
+        assert rd.variables[0]["type"] == 'map(object({authorizations = map(list(string)),name = string}))'
+        assert rd.variables[1]["type"] == 'map(object({tags = list(string), vhosts = list(string)}))'
         assert any(
-            'service_users = <MAP(OBJECT({TAGS = LIST(STRING), VHOSTS = LIST(STRING)}))>'
+            'service_users_compact = <MAP(OBJECT({AUTHORIZATIONS = MAP(LIST(STRING)),NAME = STRING}))>'
+            in line
+            for line in rd.construct_readme()
+        )
+        assert any(
+            'service_users_spaced = <MAP(OBJECT({TAGS = LIST(STRING), VHOSTS = LIST(STRING)}))>'
             in line
             for line in rd.construct_readme()
         )

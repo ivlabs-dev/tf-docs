@@ -285,10 +285,6 @@ def normalize_hcl_string(value: str) -> str:
     return value
 
 
-def normalize_inline_spacing(value: str) -> str:
-    return re.sub(r",(?!\s)", ", ", value)
-
-
 def hcl_value_to_string(value, treat_plain_string_as_expression: bool = False) -> str:
     if value is None:
         return "null"
@@ -370,6 +366,17 @@ def extract_type_overrides(file_content: str) -> dict[str, str]:
     return overrides
 
 
+def extract_type_blocks(file_content: str) -> dict[str, str]:
+    type_blocks: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        type_block = item.get("type_block")
+        if type_block is not None:
+            type_blocks[name] = type_block
+
+    return type_blocks
+
+
 def extract_validation_blocks(file_content: str) -> dict[str, str]:
     validations: dict[str, str] = {}
     metadata = extract_variable_metadata(file_content)
@@ -407,6 +414,8 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
 
         if count_blocks(block) and match_flag:
             match_flag = False
+            type_block = ""
+            type_block_cont = None
             type_override = None
             type_override_cont = None
             default_block = ""
@@ -415,6 +424,12 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
             validation_cont = None
 
             for line_block in block:
+                type_block, type_block_cont = process_raw_assignment_block(
+                    line_block,
+                    "type",
+                    type_block,
+                    type_block_cont,
+                )
                 type_override, type_override_cont = process_line_block(
                     line_block,
                     "type_override",
@@ -436,6 +451,8 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
 
             if name:
                 item: dict[str, str] = {}
+                if type_block:
+                    item["type_block"] = type_block
                 if type_override:
                     item["type_override"] = type_override
                 if default_block:
@@ -450,9 +467,14 @@ def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
     return metadata
 
 
-def construct_tf_variable(content, default_blocks: dict[str, str] | None = None):
+def construct_tf_variable(
+    content,
+    default_blocks: dict[str, str] | None = None,
+    type_blocks: dict[str, str] | None = None,
+):
     name = content["name"]
     type_str = content["type"].strip()
+    type_block_str = (type_blocks or {}).get(name, "").strip()
     desc_str = content["description"].strip()
     has_default = "default" in content
     default_str = content.get("default", "").strip()
@@ -468,9 +490,19 @@ def construct_tf_variable(content, default_blocks: dict[str, str] | None = None)
 
     if desc_first:
         lines.append(f"  description = {desc_str}")
-        lines.append(f"  type = {format_block(type_str, inline=True)}")
+        if type_block_str:
+            type_lines = type_block_str.splitlines()
+            lines.append(f"  type = {type_lines[0].strip()}")
+            lines.extend(line.rstrip() for line in type_lines[1:])
+        else:
+            lines.append(f"  type = {format_block(type_str, inline=True)}")
     else:
-        lines.append(f"  type = {format_block(type_str, inline=True)}")
+        if type_block_str:
+            type_lines = type_block_str.splitlines()
+            lines.append(f"  type = {type_lines[0].strip()}")
+            lines.extend(line.rstrip() for line in type_lines[1:])
+        else:
+            lines.append(f"  type = {format_block(type_str, inline=True)}")
         lines.append(f"  description = {desc_str}")
 
     if has_default:
@@ -493,8 +525,19 @@ def construct_tf_variable(content, default_blocks: dict[str, str] | None = None)
     return "\n".join(lines)
 
 
-def construct_tf_file(content, default_blocks: dict[str, str] | None = None):
-    parts = (construct_tf_variable(item, default_blocks=default_blocks) for item in content)
+def construct_tf_file(
+    content,
+    default_blocks: dict[str, str] | None = None,
+    type_blocks: dict[str, str] | None = None,
+):
+    parts = (
+        construct_tf_variable(
+            item,
+            default_blocks=default_blocks,
+            type_blocks=type_blocks,
+        )
+        for item in content
+    )
     return "".join(parts).rstrip() + "\n"
 
 
