@@ -15,6 +15,7 @@ from tfdocs.utils import (
     generate_source,
     hcl_value_to_string,
     normalize_hcl_string,
+    normalize_inline_spacing,
 )
 
 
@@ -67,9 +68,11 @@ class Readme:
                         body = {}
 
                     type_override = type_overrides.get(name)
-                    type_content = hcl_value_to_string(
-                        body.get("type", "unknown"),
-                        treat_plain_string_as_expression=True,
+                    type_content = normalize_inline_spacing(
+                        hcl_value_to_string(
+                            body.get("type", "unknown"),
+                            treat_plain_string_as_expression=True,
+                        ).strip()
                     )
                     description_raw = body.get("description")
                     description_content = (

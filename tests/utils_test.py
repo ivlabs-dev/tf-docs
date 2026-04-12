@@ -211,6 +211,15 @@ def test_normalize_hcl_string():
     assert utils.normalize_hcl_string("list(string)") == "list(string)"
 
 
+def test_normalize_inline_spacing():
+    assert (
+        utils.normalize_inline_spacing(
+            "map(object({tags = list(string),vhosts = list(string)}))"
+        )
+        == "map(object({tags = list(string), vhosts = list(string)}))"
+    )
+
+
 def test_match_type_constructors():
     assert utils.match_type_constructors("list") is True
     assert utils.match_type_constructors("set") is True

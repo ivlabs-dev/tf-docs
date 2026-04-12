@@ -343,3 +343,35 @@ variable "service_users" {
         assert '\\"monitor\\"' not in content
         assert '"tags" =' not in content
         assert content.strip() == expected_output.strip()
+
+
+def test_object_type_spacing_in_readme_output():
+    variables_content = """
+variable "service_users" {
+  type = map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))
+  description = "Users"
+  default = {}
+}
+"""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(variables_content)
+
+        with open(readme_file, "w") as f:
+            f.write(mock_readme_md)
+
+        rd = readme.Readme(readme_file, variables_file, module_name="example")
+
+        assert rd.variables[0]["type"] == 'map(object({tags = list(string), vhosts = list(string)}))'
+        assert any(
+            'service_users = <MAP(OBJECT({TAGS = LIST(STRING), VHOSTS = LIST(STRING)}))>'
+            in line
+            for line in rd.construct_readme()
+        )

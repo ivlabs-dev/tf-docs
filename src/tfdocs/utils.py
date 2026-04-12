@@ -285,6 +285,10 @@ def normalize_hcl_string(value: str) -> str:
     return value
 
 
+def normalize_inline_spacing(value: str) -> str:
+    return re.sub(r",(?!\s)", ", ", value)
+
+
 def hcl_value_to_string(value, treat_plain_string_as_expression: bool = False) -> str:
     if value is None:
         return "null"
