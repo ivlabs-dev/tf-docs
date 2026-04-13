@@ -118,6 +118,121 @@ def test_process_named_block():
     )
 
 
+def test_hcl_value_to_string():
+    assert utils.hcl_value_to_string(None) == "null"
+    assert utils.hcl_value_to_string(True) == "true"
+    assert utils.hcl_value_to_string(False) == "false"
+    assert utils.hcl_value_to_string(42) == "42"
+    assert utils.hcl_value_to_string("plain text") == '"plain text"'
+    assert utils.hcl_value_to_string('"already quoted"') == '"already quoted"'
+    assert (
+        utils.hcl_value_to_string("${list(string)}", treat_plain_string_as_expression=True)
+        == "list(string)"
+    )
+    assert utils.hcl_value_to_string("list(string)", treat_plain_string_as_expression=True) == "list(string)"
+    assert utils.hcl_value_to_string(["a", 1, None]) == '["a",1,null]'
+    assert utils.hcl_value_to_string({"user1": ["tag1"]}) == '{"user1" = ["tag1"]}'
+
+
+def test_construct_validation_blocks():
+    validation = [
+        {
+            "condition": "${!(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)}",
+            "error_message": "You must set subnet_ids when primary is true and secondary is false.",
+        }
+    ]
+    expected = """  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }"""
+    assert utils.construct_validation_blocks(validation) == expected
+
+
+def test_extract_type_overrides():
+    content = """
+variable "my_object" {
+  # tfdocs: type = list(object)
+  type = list(object({
+    name = string
+  }))
+}
+"""
+    assert utils.extract_type_overrides(content) == {
+        "my_object": "list(object)"
+    }
+
+
+def test_extract_type_blocks():
+    content = """
+variable "service_users_compact" {
+  type = map(object({authorizations = map(list(string)),name = string}))
+}
+
+variable "service_users_multiline" {
+  type = map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))
+}
+"""
+    assert utils.extract_type_blocks(content) == {
+        "service_users_compact": "map(object({authorizations = map(list(string)),name = string}))",
+        "service_users_multiline": """map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))""",
+    }
+
+
+def test_extract_validation_blocks():
+    content = """
+variable "subnet_ids" {
+  type = list(string)
+  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }
+}
+"""
+    assert utils.extract_validation_blocks(content) == {
+        "subnet_ids": """  validation {
+    condition = !(var.primary && !var.secondary) || (var.subnet_ids != null && length(var.subnet_ids) > 0)
+    error_message = "You must set subnet_ids when primary is true and secondary is false."
+  }"""
+    }
+
+
+def test_extract_default_blocks():
+    content = """
+variable "rabbitmq_extra_users" {
+  type = map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))
+  default = {
+    "monitor" = {
+      tags = ["monitoring"]
+      vhosts = ["imw", "papi", "capi", "webhooks"]
+    }
+  }
+}
+"""
+    assert utils.extract_default_blocks(content) == {
+        "rabbitmq_extra_users": """{
+    "monitor" = {
+      tags = ["monitoring"]
+      vhosts = ["imw", "papi", "capi", "webhooks"]
+    }
+  }"""
+    }
+
+
+def test_normalize_hcl_string():
+    assert utils.normalize_hcl_string('"var1"') == "var1"
+    assert utils.normalize_hcl_string('"This is variable 1"') == "This is variable 1"
+    assert utils.normalize_hcl_string("list(string)") == "list(string)"
+
+
 def test_match_type_constructors():
     assert utils.match_type_constructors("list") is True
     assert utils.match_type_constructors("set") is True

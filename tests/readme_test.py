@@ -122,7 +122,9 @@ def test_write_variables(temp_files):
     with open(variables_file, "r") as f:
         content = f.read()
 
-    assert content.strip() == utils.construct_tf_file(rd.sorted_variables).strip()
+    assert content.strip() == utils.construct_tf_file(
+        rd.sorted_variables, rd.default_blocks
+    ).strip()
 
 def test_construct_readme(temp_files):
     variables_file, readme_file = temp_files
@@ -159,6 +161,40 @@ def test_write_readme(temp_files):
     )
 
     assert content.strip() == expected_readme_content.strip()
+
+
+def test_construct_readme_without_existing_readme():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(mock_variables_tf)
+
+        rd = readme.Readme(
+            readme_file,
+            variables_file,
+            module_name="example",
+            module_source="git@git.com:tfdocs",
+        )
+
+        constructed_readme = rd.construct_readme()
+
+        assert constructed_readme[0] == "# example module"
+        assert "<!-- TFDOCS START -->" in constructed_readme
+        assert "<!-- TFDOCS END -->" in constructed_readme
+        assert '  source = "git@git.com:tfdocs"' in constructed_readme
+
+
+def test_readme_initialization_missing_variables_file():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "does-not-exist.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with pytest.raises(SystemExit) as exc_info:
+            readme.Readme(readme_file, variables_file)
+
+        assert exc_info.value.code == -1
 
 
 def test_validation_variable_round_trip():
@@ -206,3 +242,170 @@ variable "subnet_ids" {
             content = f.read()
 
         assert content.strip() == variable_with_validation.strip()
+
+
+def test_nested_map_default_round_trip():
+    variables_with_nested_map_defaults = """
+variable "service_extra_users" {
+  type = map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))
+  description = "Extra users"
+  default = {
+    "monitor" = {
+      tags = [
+        "monitoring"
+      ]
+      vhosts = [
+        "imw",
+        "papi",
+        "capi",
+        "webhooks"
+      ]
+    }
+  }
+}
+
+variable "service_users" {
+  type = map(object({
+    tags = list(string)
+    vhosts = list(string)
+  }))
+  description = "Users"
+  default = {
+    "public-api" = {
+      tags = [
+        "administrator"
+      ]
+      vhosts = [
+        "papi"
+      ]
+    }
+    "integrations" = {
+      tags = [
+        "administrator"
+      ]
+      vhosts = [
+        "imw"
+      ]
+    }
+    "webhooks" = {
+      tags = [
+        "administrator"
+      ]
+      vhosts = [
+        "webhooks"
+      ]
+    }
+  }
+}
+"""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(variables_with_nested_map_defaults)
+
+        with open(readme_file, "w") as f:
+            f.write(mock_readme_md)
+
+        rd = readme.Readme(readme_file, variables_file)
+        rd.write_variables()
+
+        with open(variables_file, "r") as f:
+            content = f.read()
+
+        assert '\\"monitor\\"' not in content
+        assert '"tags" =' not in content
+        assert content.strip() == variables_with_nested_map_defaults.strip()
+
+
+def test_inline_object_type_spacing_is_preserved_in_readme_output():
+    variables_content = """
+variable "service_users_compact" {
+  type = map(object({authorizations = map(list(string)),name = string}))
+  description = "Users compact"
+  default = {}
+}
+
+variable "service_users_spaced" {
+  type = map(object({tags = list(string), vhosts = list(string)}))
+  description = "Users spaced"
+  default = {}
+}
+"""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(variables_content)
+
+        with open(readme_file, "w") as f:
+            f.write(mock_readme_md)
+
+        rd = readme.Readme(readme_file, variables_file, module_name="example")
+
+        assert rd.variables[0]["type"] == 'map(object({authorizations = map(list(string)),name = string}))'
+        assert rd.variables[1]["type"] == 'map(object({tags = list(string), vhosts = list(string)}))'
+        assert any(
+            'service_users_compact = <MAP(OBJECT({AUTHORIZATIONS = MAP(LIST(STRING)),NAME = STRING}))>'
+            in line
+            for line in rd.construct_readme()
+        )
+        assert any(
+            'service_users_spaced = <MAP(OBJECT({TAGS = LIST(STRING), VHOSTS = LIST(STRING)}))>'
+            in line
+            for line in rd.construct_readme()
+        )
+
+
+def test_type_block_round_trip_preserves_inline_spacing_styles():
+    variables_content = """
+variable "service_links_compact" {
+  type = map(object({authorizations = map(list(string)),name = string}))
+  description = "Links compact"
+  default = {}
+}
+
+variable "service_links_spaced" {
+  type = map(object({tags = list(string), vhosts = list(string)}))
+  description = "Links spaced"
+  default = {}
+}
+"""
+    expected_output = """
+variable "service_links_compact" {
+  description = "Links compact"
+  type = map(object({authorizations = map(list(string)),name = string}))
+  default = {}
+}
+
+variable "service_links_spaced" {
+  description = "Links spaced"
+  type = map(object({tags = list(string), vhosts = list(string)}))
+  default = {}
+}
+"""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        variables_file = os.path.join(temp_dir, "variables.tf")
+        readme_file = os.path.join(temp_dir, "README.md")
+
+        with open(variables_file, "w") as f:
+            f.write(variables_content)
+
+        with open(readme_file, "w") as f:
+            f.write(mock_readme_md)
+
+        rd = readme.Readme(readme_file, variables_file)
+        rd.write_variables()
+
+        with open(variables_file, "r") as f:
+            content = f.read()
+
+        assert content.strip() == expected_output.strip()

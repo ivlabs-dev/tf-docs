@@ -1,16 +1,21 @@
 import os
-import re
 import sys
+from io import StringIO
 from typing import List, Dict, Optional, TypedDict
 
+import hcl2
 from rich.console import Console
 
 from tfdocs.utils import (
-    count_blocks,
+    construct_validation_blocks,
     construct_tf_file,
+    extract_default_blocks,
+    extract_type_blocks,
+    extract_type_overrides,
+    extract_validation_blocks,
     generate_source,
-    process_line_block,
-    process_named_block,
+    hcl_value_to_string,
+    normalize_hcl_string,
 )
 
 
@@ -24,8 +29,6 @@ class VariableItem(TypedDict, total=False):
 
 
 class Readme:
-    _re_var_header = re.compile(r'\s*variable\s+"?(\w+)"?\s*{\s*', re.DOTALL)
-
     def __init__(
         self,
         readme_file: str,
@@ -49,81 +52,55 @@ class Readme:
         try:
             with open(self.variables_file, "r") as file:
                 file_content = file.read().strip()
+            parsed_content = hcl2.load(StringIO(file_content))
+            self.type_blocks = extract_type_blocks(file_content)
+            type_overrides = extract_type_overrides(file_content)
+            self.default_blocks = extract_default_blocks(file_content)
+            validation_blocks = extract_validation_blocks(file_content)
 
-            block: List[str] = []
-            match_flag = False
-            name: Optional[str] = None
+            for variable_block in parsed_content.get("variable", []):
+                if not isinstance(variable_block, dict):
+                    continue
 
-            for line in file_content.split("\n"):
-                block.append(line)
-                match = self._re_var_header.match(line)
-                if match and not match_flag:
-                    name = match.group(1)
-                    match_flag = True
+                for name, body in variable_block.items():
+                    if isinstance(name, str):
+                        name = normalize_hcl_string(name)
+                    if not isinstance(body, dict):
+                        body = {}
 
-                if count_blocks(block) and match_flag:
-                    match_flag = False
-                    (
-                        type_content,
-                        default_content,
-                        description_content,
-                        type_override,
-                        validation_content,
-                    ) = ("", "", "", None, "")
-                    type_cont = None
-                    type_override_cont = None
-                    default_cont = None
-                    description_cont = None
-                    validation_cont = None
+                    type_override = type_overrides.get(name)
+                    raw_type_block = self.type_blocks.get(name, "")
+                    if raw_type_block and "\n" not in raw_type_block:
+                        type_content = raw_type_block.strip()
+                    else:
+                        type_content = hcl_value_to_string(
+                            body.get("type", "unknown"),
+                            treat_plain_string_as_expression=True,
+                        ).strip()
+                    description_raw = body.get("description")
+                    description_content = (
+                        hcl_value_to_string(description_raw)
+                        if description_raw is not None
+                        else '"No description provided"'
+                    )
+                    validation_content = validation_blocks.get(name) or construct_validation_blocks(
+                        body.get("validation")
+                    )
 
-                    for line_block in block:
-                        type_content, type_cont = process_line_block(
-                            line_block, "type", type_content, type_cont
-                        )
+                    type_len_content = type_override if type_override else type_content
+                    candidate_len = len(f"  {name} = <{type_len_content}>")
+                    if candidate_len > self.str_len:
+                        self.str_len = candidate_len
 
-                        type_override, type_override_cont = process_line_block(
-                            line_block,
-                            "type_override",
-                            type_override,
-                            type_override_cont,
-                        )
-
-                        type_len_content = (
-                            type_override if type_override else type_content
-                        )
-                        if name and type_len_content:
-                            candidate_len = len(f"  {name} = <{type_len_content}>")
-                            if candidate_len > self.str_len:
-                                self.str_len = candidate_len
-
-                        default_content, default_cont = process_line_block(
-                            line_block, "default", default_content, default_cont
-                        )
-                        description_content, description_cont = process_line_block(
-                            line_block,
-                            "description",
-                            description_content,
-                            description_cont,
-                        )
-                        validation_content, validation_cont = process_named_block(
-                            line_block,
-                            "validation",
-                            validation_content,
-                            validation_cont,
-                        )
-
-                    block = []
                     attributes: VariableItem = {
-                        "name": name or "",
+                        "name": name,
                         "type_override": type_override,
                         "type": type_content if type_content else "unknown",
-                        "description": description_content
-                        if description_content
-                        else '"No description provided"',
+                        "description": description_content,
                     }
 
-                    if default_content:
-                        attributes["default"] = default_content
+                    if "default" in body:
+                        attributes["default"] = hcl_value_to_string(body["default"])
                     if validation_content:
                         attributes["validation"] = validation_content
 
@@ -133,7 +110,11 @@ class Readme:
                 self.variables, key=lambda k: k["name"]
             )
 
-            if construct_tf_file(self.sorted_variables).strip() == file_content.strip():
+            if construct_tf_file(
+                self.sorted_variables,
+                self.default_blocks,
+                self.type_blocks,
+            ).strip() == file_content.strip():
                 self.variables_changed = False
 
         except FileNotFoundError:
@@ -144,11 +125,23 @@ class Readme:
 
     def write_variables(self) -> None:
         with open(self.variables_file, "w") as file:
-            file.writelines(construct_tf_file(self.sorted_variables))
+            file.writelines(
+                construct_tf_file(
+                    self.sorted_variables,
+                    self.default_blocks,
+                    self.type_blocks,
+                )
+            )
 
     def print_variables_file(self) -> None:
         self.console.print("[purple]--- variables.tf ---[/]")
-        print(construct_tf_file(self.sorted_variables))
+        print(
+            construct_tf_file(
+                self.sorted_variables,
+                self.default_blocks,
+                self.type_blocks,
+            )
+        )
 
     def get_status(self) -> Dict[str, bool]:
         return {

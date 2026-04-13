@@ -1,4 +1,3 @@
-import pytest
 from tfdocs.cli import get_parser, Options, get_version
 
 

@@ -1,10 +1,7 @@
-import os
-import sys
 import errno
 from unittest.mock import patch, MagicMock
 
 import pytest
-from rich.console import Console
 
 from tfdocs.__main__ import main, report_and_exit, _cli_entrypoint
 
@@ -23,6 +20,21 @@ def test_main_dry_run_with_format(mock_readme):
     """Test main function with dry-run and format flags."""
     mock_instance = MagicMock()
     mock_instance.get_status.return_value = {"variables": True, "readme": False}
+    mock_readme.return_value = mock_instance
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["tfdocs", "--dry-run", "-f"])
+    assert exc_info.value.code == -1
+
+    mock_instance.print_variables_file.assert_called_once()
+    mock_instance.print_readme.assert_called_once()
+
+
+@patch("tfdocs.readme.Readme")
+def test_main_dry_run_with_format_and_no_variable_changes(mock_readme):
+    """Test dry-run+format branch when variables.tf is already formatted."""
+    mock_instance = MagicMock()
+    mock_instance.get_status.return_value = {"variables": False, "readme": True}
     mock_readme.return_value = mock_instance
 
     with pytest.raises(SystemExit) as exc_info:

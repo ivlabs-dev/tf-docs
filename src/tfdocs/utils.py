@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import os
 import re
+import json
 import git
 
 
@@ -54,6 +57,28 @@ def process_line_block(line_block, target_type, content, cont):
     return content, cont
 
 
+def process_raw_assignment_block(line_block, target_type, content, cont):
+    type_match = None
+
+    if not cont:
+        type_match = (
+            line_block if re.match(rf"^\s*{target_type}\s*=\s*", line_block) else None
+        )
+
+    if type_match or cont == target_type:
+        if cont and content:
+            content += "\n" + line_block.rstrip()
+        else:
+            content = line_block.split("=", 1)[1].strip()
+
+        if not count_blocks(content):
+            cont = target_type
+        else:
+            cont = None
+
+    return content, cont
+
+
 def process_named_block(line_block, target_type, content, cont):
     block_match = None
 
@@ -74,6 +99,9 @@ def process_named_block(line_block, target_type, content, cont):
             cont = None
 
     return content, cont
+
+
+_RE_VAR_HEADER = re.compile(r'\s*variable\s+"?([^"]+)"?\s*{\s*', re.DOTALL)
 
 
 _TYPE_CONSTRUCTORS_RE = re.compile(r"\b(list|set|map|object|tuple)\b")
@@ -229,12 +257,228 @@ def indent_block(content: str, indent_level: int = 0) -> str:
     )
 
 
-def construct_tf_variable(content):
+def _is_expression_string(value: str) -> bool:
+    stripped = value.strip()
+    return stripped.startswith("${") and stripped.endswith("}")
+
+
+def _unwrap_expression(value: str) -> str:
+    stripped = value.strip()
+    return stripped[2:-1] if _is_expression_string(stripped) else stripped
+
+
+def _format_hcl_key(key) -> str:
+    if isinstance(key, str):
+        return json.dumps(key)
+    return str(key)
+
+
+def normalize_hcl_string(value: str) -> str:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+        if stripped[0] == '"':
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped[1:-1]
+        return stripped[1:-1]
+    return value
+
+
+def hcl_value_to_string(value, treat_plain_string_as_expression: bool = False) -> str:
+    if value is None:
+        return "null"
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    if isinstance(value, str):
+        value = normalize_hcl_string(value)
+        if _is_expression_string(value):
+            return _unwrap_expression(value)
+        if treat_plain_string_as_expression:
+            return value.strip()
+        return json.dumps(value)
+
+    if isinstance(value, list):
+        return "[" + ",".join(hcl_value_to_string(item) for item in value) + "]"
+
+    if isinstance(value, dict):
+        parts = [
+            f"{_format_hcl_key(key)} = {hcl_value_to_string(item)}"
+            for key, item in value.items()
+        ]
+        return "{" + ",".join(parts) + "}"
+
+    return str(value)
+
+
+def construct_validation_blocks(validation_value) -> str:
+    if not validation_value:
+        return ""
+
+    validation_blocks = (
+        validation_value
+        if isinstance(validation_value, list)
+        else [validation_value]
+    )
+
+    rendered_blocks = []
+    for block in validation_blocks:
+        if not isinstance(block, dict):
+            continue
+
+        lines = ["  validation {"]
+        if "condition" in block:
+            lines.append(
+                "    condition = "
+                + hcl_value_to_string(
+                    block["condition"], treat_plain_string_as_expression=True
+                )
+            )
+        if "error_message" in block:
+            lines.append(
+                "    error_message = " + hcl_value_to_string(block["error_message"])
+            )
+
+        for key, value in block.items():
+            if key in {"condition", "error_message"}:
+                continue
+            lines.append(f"    {key} = {hcl_value_to_string(value)}")
+
+        lines.append("  }")
+        rendered_blocks.append("\n".join(lines))
+
+    return "\n".join(rendered_blocks)
+
+
+def extract_type_overrides(file_content: str) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        type_override = item.get("type_override")
+        if type_override:
+            overrides[name] = type_override
+
+    return overrides
+
+
+def extract_type_blocks(file_content: str) -> dict[str, str]:
+    type_blocks: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        type_block = item.get("type_block")
+        if type_block is not None:
+            type_blocks[name] = type_block
+
+    return type_blocks
+
+
+def extract_validation_blocks(file_content: str) -> dict[str, str]:
+    validations: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        validation = item.get("validation")
+        if validation:
+            validations[name] = validation
+
+    return validations
+
+
+def extract_default_blocks(file_content: str) -> dict[str, str]:
+    defaults: dict[str, str] = {}
+    metadata = extract_variable_metadata(file_content)
+    for name, item in metadata.items():
+        default = item.get("default_block")
+        if default is not None:
+            defaults[name] = default
+
+    return defaults
+
+
+def extract_variable_metadata(file_content: str) -> dict[str, dict[str, str]]:
+    metadata: dict[str, dict[str, str]] = {}
+    block = []
+    match_flag = False
+    name = None
+
+    for line in file_content.split("\n"):
+        block.append(line)
+        match = _RE_VAR_HEADER.match(line)
+        if match and not match_flag:
+            name = match.group(1)
+            match_flag = True
+
+        if count_blocks(block) and match_flag:
+            match_flag = False
+            type_block = ""
+            type_block_cont = None
+            type_override = None
+            type_override_cont = None
+            default_block = ""
+            default_block_cont = None
+            validation = ""
+            validation_cont = None
+
+            for line_block in block:
+                type_block, type_block_cont = process_raw_assignment_block(
+                    line_block,
+                    "type",
+                    type_block,
+                    type_block_cont,
+                )
+                type_override, type_override_cont = process_line_block(
+                    line_block,
+                    "type_override",
+                    type_override,
+                    type_override_cont,
+                )
+                default_block, default_block_cont = process_raw_assignment_block(
+                    line_block,
+                    "default",
+                    default_block,
+                    default_block_cont,
+                )
+                validation, validation_cont = process_named_block(
+                    line_block,
+                    "validation",
+                    validation,
+                    validation_cont,
+                )
+
+            if name:
+                item: dict[str, str] = {}
+                if type_block:
+                    item["type_block"] = type_block
+                if type_override:
+                    item["type_override"] = type_override
+                if default_block:
+                    item["default_block"] = default_block
+                if validation:
+                    item["validation"] = validation
+                if item:
+                    metadata[name] = item
+
+            block = []
+
+    return metadata
+
+
+def construct_tf_variable(
+    content,
+    default_blocks: dict[str, str] | None = None,
+    type_blocks: dict[str, str] | None = None,
+):
     name = content["name"]
     type_str = content["type"].strip()
+    type_block_str = (type_blocks or {}).get(name, "").strip()
     desc_str = content["description"].strip()
     has_default = "default" in content
     default_str = content.get("default", "").strip()
+    default_block_str = (default_blocks or {}).get(name, "").strip()
     validation_str = content.get("validation", "")
 
     lines = [f'variable "{name}" {{']
@@ -246,13 +490,30 @@ def construct_tf_variable(content):
 
     if desc_first:
         lines.append(f"  description = {desc_str}")
-        lines.append(f"  type = {format_block(type_str, inline=True)}")
+        if type_block_str:
+            type_lines = type_block_str.splitlines()
+            lines.append(f"  type = {type_lines[0].strip()}")
+            lines.extend(line.rstrip() for line in type_lines[1:])
+        else:
+            lines.append(f"  type = {format_block(type_str, inline=True)}")
     else:
-        lines.append(f"  type = {format_block(type_str, inline=True)}")
+        if type_block_str:
+            type_lines = type_block_str.splitlines()
+            lines.append(f"  type = {type_lines[0].strip()}")
+            lines.extend(line.rstrip() for line in type_lines[1:])
+        else:
+            lines.append(f"  type = {format_block(type_str, inline=True)}")
         lines.append(f"  description = {desc_str}")
 
     if has_default:
-        if default_str == "{}":
+        if default_block_str:
+            default_lines = default_block_str.splitlines()
+            if len(default_lines) == 1:
+                lines.append(f"  default = {default_lines[0].strip()}")
+            else:
+                lines.append(f"  default = {default_lines[0].strip()}")
+                lines.extend(line.rstrip() for line in default_lines[1:])
+        elif default_str == "{}":
             lines.append("  default = {}")
         else:
             lines.append(f"  default = {format_block(default_str, inline=True)}")
@@ -264,8 +525,19 @@ def construct_tf_variable(content):
     return "\n".join(lines)
 
 
-def construct_tf_file(content):
-    parts = (construct_tf_variable(item) for item in content)
+def construct_tf_file(
+    content,
+    default_blocks: dict[str, str] | None = None,
+    type_blocks: dict[str, str] | None = None,
+):
+    parts = (
+        construct_tf_variable(
+            item,
+            default_blocks=default_blocks,
+            type_blocks=type_blocks,
+        )
+        for item in content
+    )
     return "".join(parts).rstrip() + "\n"
 
 
